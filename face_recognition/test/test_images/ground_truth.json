@@ -1,0 +1,12 @@
+{
+  "test_1.jpg": ["damon", "ellena", "stefan"],
+  "test_2.jpg": ["damon", "stefan"],
+  "test_3.jpg": ["damon", "ellena", "stefan"],
+  "test_4.jpg": ["ellena", "stefan"],
+  "test_5.jpg": ["damon", "ellena", "stefan"],
+  "test_6.jpg": ["damon", "ellena", "stefan"],
+  "test_7.jpg": ["damon", "ellena", "stefan"],
+  "test_8.jpg": ["damon", "ellena", "stefan"],
+  "test_9.jpg": ["damon", "ellena", "stefan"],
+  "test_10.jpg": ["damon", "ellena", "stefan"]
+}

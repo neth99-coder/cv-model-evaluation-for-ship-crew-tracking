@@ -1,0 +1,23 @@
+# ── Face Recognition Evaluation ──────────────────────────────────────────────
+# Install all:
+#   pip install -r requirements.txt
+#
+# For GPU acceleration (optional):
+#   pip install onnxruntime-gpu   (replaces onnxruntime)
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# Core
+numpy>=1.24.0
+opencv-python>=4.8.0
+Pillow>=10.0.0
+requests>=2.31.0
+
+# AuraFace (ResNet100) + MobileFaceNet  →  InsightFace antelopev2 / buffalo_s
+insightface>=0.7.3
+onnxruntime>=1.16.0          # use onnxruntime-gpu for CUDA
+
+# FaceNet (Sandberg)  →  DeepFace Facenet512
+deepface>=0.0.93
+tf-keras>=2.16.0             # required by recent deepface with TF 2.x
+
+# CompreFace is a Docker service – no Python package needed beyond requests
