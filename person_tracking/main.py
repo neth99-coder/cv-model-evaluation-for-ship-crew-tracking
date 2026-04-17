@@ -98,6 +98,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--conf", type=float, default=0.25, help="Detection confidence threshold")
     parser.add_argument("--imgsz", type=int, default=640, help="Detector inference size")
+    parser.add_argument(
+        "--reid",
+        type=str,
+        default=None,
+        help="Optional Re-ID override for BoxMOT runs (example: osnet_x0_25_msmt17, fastreid_sbs_s50)",
+    )
     parser.add_argument("--max-frames", type=int, default=None, help="Maximum frames per video")
     parser.add_argument("--time-limit", type=float, default=60.0, help="Seconds per model/video (0 disables)")
 
@@ -135,6 +141,8 @@ def main() -> None:
     print(f"  Backend mode     : {args.backend}")
     print(f"  BoxMOT available : {has_boxmot}")
     print(f"  Detector         : {args.detector}")
+    if args.reid:
+        print(f"  Re-ID override   : {args.reid}")
     print(f"  Confidence       : {args.conf}")
     print(f"  Img size         : {args.imgsz}")
     if args.max_frames is not None:
@@ -178,7 +186,7 @@ def main() -> None:
                 tracker_name=spec.boxmot_tracker,
                 tracker_label=spec.label,
                 detector=args.detector,
-                reid_model=spec.boxmot_reid,
+                reid_model=args.reid if args.reid else spec.boxmot_reid,
                 test_dir=args.test_dir,
                 results_base=args.results_dir,
                 conf=args.conf,

@@ -249,6 +249,7 @@ def run_boxmot_live(
     spec: TrackerSpec,
     source: str | int,
     detector: str,
+    reid_override: str | None,
     conf: float,
     imgsz: int,
     max_frames: int | None,
@@ -289,7 +290,7 @@ def run_boxmot_live(
 
     runner = Boxmot(
         detector=_normalize_boxmot_detector_name(detector),
-        reid=spec.boxmot_reid,
+        reid=reid_override if reid_override else spec.boxmot_reid,
         tracker=spec.boxmot_tracker,
         classes=[0],
         project=project_dir,
@@ -334,6 +335,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--backend", choices=["auto", "boxmot", "custom"], default="auto", help="Execution backend")
     parser.add_argument("--source", default=None, help="Video path or webcam index (e.g. 0). If omitted, first test video is used")
     parser.add_argument("--detector", default="yolov8n.pt", help="Detector spec/weights")
+    parser.add_argument(
+        "--reid",
+        default=None,
+        help="Optional Re-ID override for BoxMOT runs (example: osnet_x0_25_msmt17, fastreid_sbs_s50)",
+    )
     parser.add_argument("--conf", type=float, default=0.25, help="Detection confidence")
     parser.add_argument("--imgsz", type=int, default=640, help="Inference image size")
     parser.add_argument("--max-frames", type=int, default=None, help="Maximum frames to process")
@@ -370,6 +376,8 @@ def main() -> None:
     print(f"Backend mode     : {args.backend}")
     print(f"BoxMOT available : {has_boxmot}")
     print(f"Detector         : {args.detector}")
+    if args.reid:
+        print(f"Re-ID override   : {args.reid}")
     print(f"Conf             : {args.conf}")
     print(f"Img size         : {args.imgsz}")
     if args.max_frames is not None:
@@ -389,6 +397,7 @@ def main() -> None:
                     spec=spec,
                     source=source,
                     detector=args.detector,
+                    reid_override=args.reid,
                     conf=args.conf,
                     imgsz=args.imgsz,
                     max_frames=args.max_frames,
