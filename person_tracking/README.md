@@ -1,24 +1,17 @@
-# Person Tracking Model Evaluation
+# Person Tracking Evaluation
 
-Evaluates free industrial person-tracking models on test videos and saves annotated outputs plus comparison reports.
+This module now supports pluggable detector and ReID backends across the tracking pipeline.
 
-## Trackers
+## What is included
 
-| Tracker Key  | Label      | Availability    | Notes                                                      |
-| ------------ | ---------- | --------------- | ---------------------------------------------------------- |
-| `deepsort`   | DeepSORT   | BoxMOT + Custom | BoxMOT maps this to StrongSORT; custom adapter also exists |
-| `bytetrack`  | ByteTrack  | BoxMOT + Custom | Fast and practical baseline                                |
-| `botsort`    | BoT-SORT   | BoxMOT + Custom | Strong association quality                                 |
-| `strongsort` | StrongSORT | BoxMOT only     | DeepSORT-family tracker with re-ID                         |
-| `deepocsort` | DeepOCSORT | BoxMOT only     | SOTA-style ID robustness                                   |
-| `ocsort`     | OCSORT     | BoxMOT only     | ReID-free motion/association tracker                       |
-| `hybridsort` | HybridSORT | BoxMOT only     | Modern hybrid association                                  |
-| `boosttrack` | BoostTrack | BoxMOT only     | Strong MOT17 performance                                   |
-| `sfsort`     | SFSORT     | BoxMOT only     | Lightweight BoxMOT option                                  |
-
-All trackers in this repo track the `person` class only.
-
----
+- Custom tracker adapters in `trackers/` for `botsort`, `bytetrack`, and `deepsort`.
+- A generic BoxMOT client in `trackers/boxmot_client.py` that can run any supported BoxMOT tracker backend against the same detector registry.
+- A detector registry that reuses the existing models from `person_detection`:
+  - `yolov8n`, `yolov8s`, `yolov8m`, `yolov8l`, `yolov8x`
+  - `yolov5s`, `yolov5m`, `yolov5l`, `yolov5x`
+  - `faster_rcnn`
+  - `ssd_mobilenet`
+- An evaluation script in `evaluate.py` and a live preview script in `live_tracking.py`.
 
 ## Setup
 
@@ -26,134 +19,89 @@ All trackers in this repo track the `person` class only.
 pip install -r requirements.txt
 ```
 
----
+## Tracker modes
 
-## Test-data layout
+- `botsort`: custom wrapper over the BoxMOT BoT-SORT tracker, fed by any detector from this repo.
+- `bytetrack`: custom wrapper over the BoxMOT ByteTrack tracker, fed by any detector from this repo.
+- `deepsort`: custom `deep-sort-realtime` wrapper with configurable embedders.
+- `boxmot:<tracker>`: generic BoxMOT client for any installed BoxMOT tracker backend such as `strongsort`, `deepocsort`, or `ocsort`.
 
-```text
-person_tracking/test/
-└── videos/
-    ├── clip1.mp4
-    ├── clip2.mp4
-    └── ...
-```
+## ReID support
 
----
+- `botsort` and ReID-capable `boxmot:<tracker>` modes accept `--reid` with either a BoxMOT ReID model name such as `osnet_x0_25_msmt17` or a weights path.
+- `deepsort` accepts `--deepsort-embedder` with one of:
+  - `mobilenet`
+  - `torchreid`
+  - `clip_RN50`
+  - `clip_RN101`
+  - `clip_RN50x4`
+  - `clip_RN50x16`
+  - `clip_ViT-B/32`
+  - `clip_ViT-B/16`
 
-## Usage
-
-```bash
-# Evaluate all trackers
-python main.py
-
-# Evaluate selected trackers
-python main.py --models deepsort bytetrack deepocsort
-
-# Backend policy
-python main.py --backend auto     # default: BoxMOT first, fallback to custom
-python main.py --backend boxmot   # force BoxMOT only
-python main.py --backend custom   # force custom only (deepsort/bytetrack/botsort)
-
-# Detector spec / weights
-python main.py --detector yolov8s.pt
-
-# Bound runtime on heavy models
-python main.py --time-limit 60
-
-# Evaluate only first N frames/video
-python main.py --max-frames 300
-```
-
-### CLI options
-
-- `--models`: any tracker key listed above, or `all`
-- `--backend`: `auto`, `boxmot`, `custom`
-- `--detector`: detector spec/weights shared across backends (default: `yolov8n.pt`)
-- `--conf`: detection confidence threshold
-- `--imgsz`: detector image size
-- `--max-frames`: frame cap per video
-- `--time-limit`: seconds per model/video (`0` disables cap)
-
----
-
-## Live tracking tool
-
-Use the separate live runner for real-time playback on a video source:
+## Evaluate combinations
 
 ```bash
-# Auto source (first file in test/videos), auto backend
-python live_tracking.py --model bytetrack
+# Default single combination
+python evaluate.py
 
-# Force custom backend
-python live_tracking.py --model deepsort --backend custom
+# Compare multiple custom trackers against one detector
+python evaluate.py --trackers botsort bytetrack deepsort --detectors yolov8n
 
-# Force BoxMOT backend
-python live_tracking.py --model ocsort --backend boxmot
+# Compare the default tracker suite against the default detector suite
+python evaluate.py --trackers all --detectors all
 
-# Specific source, headless, save output
-python live_tracking.py \
-    --model deepocsort \
-    --backend auto \
-    --source /path/to/video.mp4 \
-    --no-show \
-    --max-frames 300 \
-    --save-out results/live_deepocsort.mp4
+# Run a generic BoxMOT backend with a repo detector
+python evaluate.py --trackers boxmot:strongsort --detectors faster_rcnn --reid osnet_x0_25_msmt17
+
+# Use DeepSORT with a different appearance encoder
+python evaluate.py --trackers deepsort --detectors yolov5s --deepsort-embedder torchreid --deepsort-embedder-model osnet_x0_25
 ```
 
-Live CLI options:
+### Evaluation outputs
 
-- `--model`: one tracker key (same set as `main.py`)
-- `--backend`: `auto`, `boxmot`, `custom`
-- `--source`: video path or webcam index (example: `0`)
-- `--detector`: detector spec/weights
-- `--conf`, `--imgsz`: detector parameters
-- `--max-frames`, `--time-limit`: runtime bounds
-- `--save-out`: save annotated output video
-- `--no-show`: disable UI window
+Each detector/tracker combination writes a folder under `results/` containing:
 
-When the UI window is enabled, press `q` to quit.
+- `summary.json`
+- `detailed_results.json`
+- `per_video_results.csv`
+- `annotated_videos/*.mp4`
+- `tracks_txt/*.txt`
 
----
+The root `results/` directory also gets:
 
-## Output layout
+- `comparison_report.md`
+- `comparison_summary.csv`
 
-```text
-person_tracking/results/
-├── comparison_report.md
-├── comparison_summary.csv
-├── DeepSORT/
-│   ├── summary.json
-│   ├── detailed_results.json
-│   ├── per_video_results.csv
-│   └── annotated_videos/
-│       └── clip1_tracked.mp4
-├── ByteTrack/
-│   └── ...
-└── BoT-SORT/
-    └── ...
-```
+The reported metrics are runtime-oriented:
 
----
-
-## Reported metrics
-
-Without identity ground truth, this project reports practical proxy metrics for production benchmarking:
-
-- `avg_fps`
+- `avg_detection_ms`
+- `avg_tracking_ms`
 - `avg_inference_ms`
+- `avg_fps`
 - `avg_unique_tracks`
+- `avg_detections`
+- `avg_tracks`
 
-Interpretation:
+## Live tracking
 
-- Higher `avg_fps` is faster.
-- Higher `avg_unique_tracks` often indicates more tracked identities detected.
+```bash
+# Auto-pick the first test video
+python live_tracking.py --tracker botsort --detector yolov8n
 
----
+# Camera source
+python live_tracking.py --source 0 --tracker deepsort --detector yolov8n
+
+# Save annotated output and disable preview window
+python live_tracking.py --tracker boxmot:strongsort --detector faster_rcnn --reid osnet_x0_25_msmt17 --save-out results/live_strongsort.mp4 --no-show
+```
+
+Controls:
+
+- Press `q` or `Esc` to stop the live preview.
 
 ## Notes
 
-- First run may download YOLO weights from Ultralytics.
-- `auto` mode uses BoxMOT when a model combination is available and falls back to custom otherwise.
-- For non-YOLO detector experimentation, prefer `--backend boxmot` first.
-- Custom backend currently supports `deepsort`, `bytetrack`, and `botsort`.
-- On macOS, PyTorch detection/tracking typically runs CPU or mixed backend depending on available ops.
+- BoxMOT's own detector registry does not cover every detector used in this repo, so the BoxMOT client here feeds detections from the local detector registry into BoxMOT trackers directly.
+- `bytetrack` does not use ReID.
+- `frame_step`, `max_frames`, and `time_limit` are available in `evaluate.py` to bound long-running evaluations.
