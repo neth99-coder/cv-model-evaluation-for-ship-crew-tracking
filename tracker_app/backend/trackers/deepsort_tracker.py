@@ -19,6 +19,16 @@ DEEPSORT_KWARGS = {
 }
 
 
+YOLO_WEIGHTS = {
+    "yolov8n": "yolov8n.pt",
+    "yolov8s": "yolov8s.pt",
+    "yolov8m": "yolov8m.pt",
+    # Map legacy YOLOv5 names to Ultralytics v8-compatible YOLOv5u checkpoints.
+    "yolov5n": "yolov5nu.pt",
+    "yolov5s": "yolov5su.pt",
+}
+
+
 def _install_packages(packages: list[str]) -> None:
     """Install required Python packages using the active interpreter."""
     print(f"[DeepSORT] Installing missing packages: {packages}")
@@ -63,12 +73,10 @@ class DeepSORTTracker:
 
     def _init_detector(self):
         try:
-            if self.detector_name.startswith("yolov8"):
+            if self.detector_name.startswith("yolo"):
                 from ultralytics import YOLO
-                self._detector = YOLO(f"{self.detector_name}.pt")
-            elif self.detector_name.startswith("yolov5"):
-                import torch
-                self._detector = torch.hub.load("ultralytics/yolov5", self.detector_name, pretrained=True)
+                weights = YOLO_WEIGHTS.get(self.detector_name, f"{self.detector_name}.pt")
+                self._detector = YOLO(weights)
             elif self.detector_name == "fasterrcnn":
                 import torch
                 from torchvision.models.detection import (
@@ -104,7 +112,7 @@ class DeepSORTTracker:
         if self._detector is None:
             raise RuntimeError("DeepSORT detector is not initialized")
         try:
-            if self.detector_name.startswith("yolov8"):
+            if self.detector_name.startswith("yolo"):
                 results = self._detector.predict(frame, conf=self.conf, classes=[0], verbose=False)
                 boxes = results[0].boxes
                 if boxes is None or len(boxes) == 0:
@@ -112,11 +120,6 @@ class DeepSORTTracker:
                 xyxy = boxes.xyxy.cpu().numpy()
                 confs = boxes.conf.cpu().numpy().reshape(-1, 1)
                 return np.hstack([xyxy, confs])
-            elif self.detector_name.startswith("yolov5"):
-                results = self._detector(frame)
-                dets = results.xyxy[0].cpu().numpy()
-                persons = dets[dets[:, 5] == 0]
-                return persons[:, :5]
             elif self.detector_name in ("fasterrcnn", "ssd_mobilenet"):
                 return self._torchvision_detect(frame)
         except Exception as e:

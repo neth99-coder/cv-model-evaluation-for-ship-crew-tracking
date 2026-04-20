@@ -12,6 +12,8 @@ const DEFAULT_CONFIG = {
   detector: "yolov8n",
   reidModel: null,
   confThreshold: 0.4,
+  colorEnabled: true,
+  colorSegmenter: "grabcut",
 };
 
 const MODE_REALTIME = "realtime";
@@ -183,7 +185,9 @@ export default function ObjectTracking() {
         <SectionTitle icon={Crosshair} title="MODEL CONFIGURATION" />
         <ModelSelector
           config={config}
-          onChange={(c) => setConfig(typeof c === "function" ? c(config) : c)}
+          onChange={(c) =>
+            setConfig((prev) => (typeof c === "function" ? c(prev) : c))
+          }
         />
       </div>
 

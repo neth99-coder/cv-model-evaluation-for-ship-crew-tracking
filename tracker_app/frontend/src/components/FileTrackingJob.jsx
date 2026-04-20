@@ -26,6 +26,8 @@ export default function FileTrackingJob({
         tracker: modelConfig.tracker,
         detector: modelConfig.detector,
         conf_threshold: modelConfig.confThreshold,
+        color_enabled: modelConfig.colorEnabled ?? true,
+        color_segmenter: modelConfig.colorSegmenter || "grabcut",
       };
       if (modelConfig.reidModel) params.reid_model = modelConfig.reidModel;
       const res = await axios.post("/api/track/file", null, { params });
@@ -49,7 +51,10 @@ export default function FileTrackingJob({
           clearInterval(pollRef.current);
           setStatus("done");
           setMetrics(job.metrics);
-          onJobComplete?.({ config: job.pipeline || modelConfig, metrics: job.metrics });
+          onJobComplete?.({
+            config: job.pipeline || modelConfig,
+            metrics: job.metrics,
+          });
         } else if (job.status === "error") {
           clearInterval(pollRef.current);
           setStatus("error");
@@ -101,6 +106,12 @@ export default function FileTrackingJob({
             ["Tracker", modelConfig.tracker],
             ["Detector", modelConfig.detector],
             ["Re-ID", modelConfig.reidModel || "none"],
+            [
+              "Color",
+              modelConfig.colorEnabled
+                ? modelConfig.colorSegmenter || "grabcut"
+                : "off",
+            ],
             ["Confidence", modelConfig.confThreshold.toFixed(2)],
           ].map(([k, v]) => (
             <div

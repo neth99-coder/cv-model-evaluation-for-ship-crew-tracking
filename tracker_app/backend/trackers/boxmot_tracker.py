@@ -43,6 +43,16 @@ STABLE_ID_MIN_SIM = 0.5
 STABLE_ID_MAX_CENTER_DIST = 0.3
 
 
+YOLO_WEIGHTS = {
+    "yolov8n": "yolov8n.pt",
+    "yolov8s": "yolov8s.pt",
+    "yolov8m": "yolov8m.pt",
+    # Map legacy YOLOv5 names to Ultralytics v8-compatible YOLOv5u checkpoints.
+    "yolov5n": "yolov5nu.pt",
+    "yolov5s": "yolov5su.pt",
+}
+
+
 def _install_packages(packages: list[str]) -> None:
     """Install required Python packages using the active interpreter."""
     print(f"[BoxMOT] Installing missing packages: {packages}")
@@ -87,12 +97,10 @@ class BoxMOTTracker:
 
     def _init_detector(self):
         try:
-            if self.detector_name.startswith("yolov8"):
+            if self.detector_name.startswith("yolo"):
                 from ultralytics import YOLO
-                self._detector = YOLO(f"{self.detector_name}.pt")
-            elif self.detector_name.startswith("yolov5"):
-                import torch
-                self._detector = torch.hub.load("ultralytics/yolov5", self.detector_name, pretrained=True)
+                weights = YOLO_WEIGHTS.get(self.detector_name, f"{self.detector_name}.pt")
+                self._detector = YOLO(weights)
             elif self.detector_name == "fasterrcnn":
                 import torch
                 from torchvision.models.detection import (
@@ -128,7 +136,7 @@ class BoxMOTTracker:
         if self._detector is None:
             raise RuntimeError("BoxMOT detector is not initialized")
         try:
-            if self.detector_name.startswith("yolov8"):
+            if self.detector_name.startswith("yolo"):
                 results = self._detector.predict(frame, conf=self.conf, classes=[0], verbose=False)
                 boxes = results[0].boxes
                 if boxes is None or len(boxes) == 0:
@@ -137,11 +145,6 @@ class BoxMOTTracker:
                 confs = boxes.conf.cpu().numpy().reshape(-1, 1)
                 cls = boxes.cls.cpu().numpy().reshape(-1, 1)
                 return np.hstack([xyxy, confs, cls])
-            elif self.detector_name.startswith("yolov5"):
-                results = self._detector(frame)
-                dets = results.xyxy[0].cpu().numpy()
-                person_mask = dets[:, 5] == 0
-                return dets[person_mask]
             elif self.detector_name in ("fasterrcnn", "ssd_mobilenet"):
                 return self._torchvision_detect(frame)
         except Exception as e:

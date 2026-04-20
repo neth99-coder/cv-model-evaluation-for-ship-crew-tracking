@@ -60,6 +60,7 @@ export default function MetricsPanel({ metrics, live, frameInfo }) {
   if (!metrics && !live) return null;
 
   const fps = live?.fps ?? metrics?.avg_fps;
+  const trackerFps = live?.tracker_fps;
   const tracks = live?.track_count ?? metrics?.avg_tracks_per_frame;
   const uniqueTracks = metrics?.unique_tracks;
   const totalFrames = live?.frame_idx ?? metrics?.total_frames_processed;
@@ -116,10 +117,18 @@ export default function MetricsPanel({ metrics, live, frameInfo }) {
       >
         <Stat
           icon={Zap}
-          label="FPS"
+          label={live ? "PIPELINE FPS" : "FPS"}
           value={fps?.toFixed(1)}
           color="var(--accent)"
         />
+        {live && trackerFps !== undefined && (
+          <Stat
+            icon={Zap}
+            label="TRACKER FPS"
+            value={trackerFps?.toFixed(1)}
+            color="var(--text2)"
+          />
+        )}
         <Stat
           icon={Users}
           label="TRACKS/FRAME"

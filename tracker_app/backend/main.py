@@ -23,6 +23,7 @@ from trackers.deepsort_tracker import DeepSORTTracker
 from utils.session_manager import SessionManager
 from utils.metrics import TrackingMetrics
 from utils.coco_metrics import CocoMetricEvaluator, resolve_coco_annotation_path
+from utils.cloth_color import ClothColorEngine
 
 app = FastAPI(title="Multi-Tracker Person Tracking API", version="1.0.0")
 
@@ -42,6 +43,15 @@ for d in [UPLOAD_DIR, OUTPUT_DIR, TEST_DIR]:
     d.mkdir(exist_ok=True)
 
 session_manager = SessionManager()
+
+STREAM_MAX_WIDTH = 960
+STREAM_JPEG_QUALITY = 60
+STREAM_MAX_FPS = 18.0
+COLOR_UPDATE_INTERVAL = {
+    "grabcut": 2,
+    "yolov8n-seg": 3,
+    "yolov8s-seg": 4,
+}
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -72,6 +82,11 @@ TRACKER_CAPABILITIES = {
     },
 }
 
+COLOR_CAPABILITIES = {
+    "enabled": True,
+    "segmenters": ["grabcut", "yolov8n-seg", "yolov8s-seg"],
+}
+
 # ─── Routes ──────────────────────────────────────────────────────────────────
 
 @app.get("/")
@@ -82,7 +97,9 @@ async def root():
 @app.get("/api/capabilities")
 async def get_capabilities():
     """Return tracker/detector/reid capabilities for each framework."""
-    return TRACKER_CAPABILITIES
+    data = dict(TRACKER_CAPABILITIES)
+    data["cloth_color"] = COLOR_CAPABILITIES
+    return data
 
 
 @app.post("/api/upload")
@@ -129,6 +146,8 @@ async def track_to_file(
     detector: str = "yolov8n",
     reid_model: Optional[str] = None,
     coco_annotations: Optional[str] = None,
+    color_enabled: bool = True,
+    color_segmenter: str = "grabcut",
     conf_threshold: float = 0.4,
 ):
     """Start tracking job that saves output video + metrics."""
@@ -147,6 +166,8 @@ async def track_to_file(
         "detector": detector,
         "reid_model": reid_model,
         "coco_annotations": coco_annotations,
+        "color_enabled": color_enabled,
+        "color_segmenter": color_segmenter,
         "video_id": video_id,
         "output_path": str(output_path),
         "metrics_path": str(metrics_path),
@@ -155,7 +176,8 @@ async def track_to_file(
     background_tasks.add_task(
         _run_tracking_job,
         job_id, video_path, output_path, metrics_path,
-        framework, tracker, detector, reid_model, coco_annotations, conf_threshold
+        framework, tracker, detector, reid_model, coco_annotations,
+        color_enabled, color_segmenter, conf_threshold
     )
 
     return {"job_id": job_id, "status": "queued"}
@@ -210,9 +232,17 @@ async def realtime_tracking(websocket: WebSocket, session_id: str):
         detector = config.get("detector", "yolov8n")
         reid_model = config.get("reid_model")
         conf = float(config.get("conf_threshold", 0.4))
+        color_enabled = bool(config.get("color_enabled", True))
+        color_segmenter = config.get("color_segmenter", "grabcut")
 
         tracker = _build_tracker(framework, tracker_name, detector, reid_model, conf)
         runtime_pipeline = _runtime_pipeline(tracker, framework, tracker_name, detector, reid_model)
+        if color_enabled:
+            runtime_pipeline["cloth_color"] = {"enabled": True, "segmenter": color_segmenter}
+        else:
+            runtime_pipeline["cloth_color"] = {"enabled": False, "segmenter": None}
+
+        color_engine = ClothColorEngine(color_segmenter) if color_enabled else None
         cap = cv2.VideoCapture(str(video_path))
 
         await websocket.send_text(json.dumps({
@@ -224,37 +254,53 @@ async def realtime_tracking(websocket: WebSocket, session_id: str):
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         metrics = TrackingMetrics()
         frame_idx = 0
+        emit_interval = 1.0 / max(1.0, min(float(fps_real), STREAM_MAX_FPS))
+        next_emit_at = time.monotonic()
+        color_cache: dict[int, dict] = {}
+        color_interval = COLOR_UPDATE_INTERVAL.get(color_segmenter, 2)
 
         while session_manager.is_ws_active(session_id):
             ret, frame = cap.read()
             if not ret:
                 break
 
+            frame_t0 = time.time()
             t0 = time.time()
             tracks = tracker.update(frame)
-            elapsed = time.time() - t0
+            tracker_elapsed = time.time() - t0
 
-            metrics.update(tracks, elapsed, frame_idx)
-            annotated = _draw_tracks(frame.copy(), tracks)
+            if color_engine:
+                if frame_idx % color_interval == 0 or not color_cache:
+                    fresh_colors = color_engine.analyze_tracks(frame, tracks)
+                    if fresh_colors:
+                        color_cache.update(fresh_colors)
+                _prune_color_cache(color_cache, tracks)
+                track_colors = dict(color_cache)
+            else:
+                track_colors = {}
 
-            # Encode frame as JPEG
-            _, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 75])
-            b64 = __import__("base64").b64encode(buf).decode()
+            annotated = _draw_tracks(frame.copy(), tracks, track_colors)
+            pipeline_elapsed = time.time() - frame_t0
+            metrics.update(tracks, pipeline_elapsed, frame_idx)
 
-            payload = {
-                "type": "frame",
-                "frame": b64,
-                "frame_idx": frame_idx,
-                "total_frames": total_frames,
-                "fps": round(1.0 / elapsed if elapsed > 0 else 0, 1),
-                "track_count": len(tracks),
-                "metrics": metrics.summary(),
-            }
-            await websocket.send_text(json.dumps(payload))
+            now = time.monotonic()
+            if now >= next_emit_at:
+                b64 = _encode_stream_frame(annotated)
+                payload = {
+                    "type": "frame",
+                    "frame": b64,
+                    "frame_idx": frame_idx,
+                    "total_frames": total_frames,
+                    "fps": round(1.0 / pipeline_elapsed if pipeline_elapsed > 0 else 0, 1),
+                    "tracker_fps": round(1.0 / tracker_elapsed if tracker_elapsed > 0 else 0, 1),
+                    "track_count": len(tracks),
+                }
+                await websocket.send_text(json.dumps(payload))
+                next_emit_at = now + emit_interval
             frame_idx += 1
 
             # throttle to ~real-time
-            await asyncio.sleep(max(0, (1.0 / fps_real) - elapsed))
+            await asyncio.sleep(max(0, (1.0 / fps_real) - pipeline_elapsed))
 
         cap.release()
         await websocket.send_text(json.dumps({
@@ -391,7 +437,8 @@ def _runtime_pipeline(tracker, framework, tracker_name, detector, reid_model):
     }
 
 
-def _draw_tracks(frame, tracks):
+def _draw_tracks(frame, tracks, track_colors=None):
+    track_colors = track_colors or {}
     colors = {}
     for track in tracks:
         tid = _as_int_track_id(track[4])
@@ -401,9 +448,78 @@ def _draw_tracks(frame, tracks):
             colors[tid] = tuple(np.random.randint(80, 255, 3).tolist())
         color = colors[tid]
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-        cv2.putText(frame, f"person_{tid}", (x1, y1 - 8),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        _draw_label_text(frame, f"person_{tid}", x1, max(12, y1 - 8), accent=color)
+
+        cinfo = track_colors.get(tid)
+        if cinfo:
+            top = cinfo.get("top")
+            bottom = cinfo.get("bottom")
+            if top or bottom:
+                color_txt = f"TOP:{top or '-'}  BTM:{bottom or '-'}"
+                y_text = min(y2 + 16, frame.shape[0] - 8)
+                _draw_label_text(frame, color_txt, x1, y_text, accent=color, scale=0.5)
     return frame
+
+
+def _prune_color_cache(cache: dict[int, dict], tracks) -> None:
+    if not cache:
+        return
+    active_ids = {_as_int_track_id(t[4]) for t in tracks} if tracks is not None else set()
+    for tid in list(cache.keys()):
+        if tid not in active_ids:
+            cache.pop(tid, None)
+
+
+def _encode_stream_frame(frame) -> str:
+    """Encode realtime frame for websocket with bounded size and quality."""
+    import base64
+
+    h, w = frame.shape[:2]
+    if w > STREAM_MAX_WIDTH:
+        scale = STREAM_MAX_WIDTH / float(w)
+        frame = cv2.resize(frame, (STREAM_MAX_WIDTH, max(1, int(h * scale))), interpolation=cv2.INTER_AREA)
+
+    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, STREAM_JPEG_QUALITY])
+    if not ok:
+        return ""
+    return base64.b64encode(buf).decode()
+
+
+def _draw_label_text(frame, text, x, y, accent=(255, 255, 255), scale=0.58):
+    """Draw readable labels with a dark background and high-contrast text."""
+    (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, 1)
+    pad_x = 4
+    pad_y = 3
+    x1 = max(0, x - pad_x)
+    y1 = max(0, y - th - pad_y)
+    x2 = min(frame.shape[1] - 1, x + tw + pad_x)
+    y2 = min(frame.shape[0] - 1, y + baseline + pad_y)
+
+    # Main dark box plus thin accent border for association with track color.
+    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 0), -1)
+    cv2.rectangle(frame, (x1, y1), (x2, y2), accent, 1)
+
+    # White text with black outline for maximum visibility.
+    cv2.putText(
+        frame,
+        text,
+        (x, y),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        scale,
+        (0, 0, 0),
+        3,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        frame,
+        text,
+        (x, y),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        scale,
+        (255, 255, 255),
+        1,
+        cv2.LINE_AA,
+    )
 
 
 def _as_int_coord(value) -> int:
@@ -420,11 +536,18 @@ def _as_int_track_id(value) -> int:
 
 
 async def _run_tracking_job(job_id, video_path, output_path, metrics_path,
-                             framework, tracker_name, detector, reid_model, coco_annotations, conf):
+                             framework, tracker_name, detector, reid_model, coco_annotations,
+                             color_enabled, color_segmenter, conf):
     session_manager.update_job(job_id, {"status": "running", "progress": 0})
     try:
         tracker = _build_tracker(framework, tracker_name, detector, reid_model, conf)
         runtime_pipeline = _runtime_pipeline(tracker, framework, tracker_name, detector, reid_model)
+        if color_enabled:
+            runtime_pipeline["cloth_color"] = {"enabled": True, "segmenter": color_segmenter}
+        else:
+            runtime_pipeline["cloth_color"] = {"enabled": False, "segmenter": None}
+
+        color_engine = ClothColorEngine(color_segmenter) if color_enabled else None
         coco_path = resolve_coco_annotation_path(video_path, coco_annotations)
         coco_eval = CocoMetricEvaluator(coco_path) if coco_path else None
         cap = cv2.VideoCapture(str(video_path))
@@ -437,18 +560,40 @@ async def _run_tracking_job(job_id, video_path, output_path, metrics_path,
         writer = cv2.VideoWriter(str(output_path), fourcc, fps, (w, h))
         metrics = TrackingMetrics()
         frame_idx = 0
+        color_counts_top = {}
+        color_counts_bottom = {}
+        color_cache: dict[int, dict] = {}
+        color_interval = COLOR_UPDATE_INTERVAL.get(color_segmenter, 2)
 
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
-            t0 = time.time()
+            frame_t0 = time.time()
             tracks = tracker.update(frame)
-            elapsed = time.time() - t0
+            if color_engine:
+                if frame_idx % color_interval == 0 or not color_cache:
+                    fresh_colors = color_engine.analyze_tracks(frame, tracks)
+                    if fresh_colors:
+                        color_cache.update(fresh_colors)
+                _prune_color_cache(color_cache, tracks)
+                track_colors = dict(color_cache)
+            else:
+                track_colors = {}
+
+            elapsed = time.time() - frame_t0
             metrics.update(tracks, elapsed, frame_idx)
             if coco_eval:
                 coco_eval.add_tracks(frame_idx, tracks)
-            annotated = _draw_tracks(frame.copy(), tracks)
+            for _, c in track_colors.items():
+                t = c.get("top")
+                b = c.get("bottom")
+                if t:
+                    color_counts_top[t] = color_counts_top.get(t, 0) + 1
+                if b:
+                    color_counts_bottom[b] = color_counts_bottom.get(b, 0) + 1
+
+            annotated = _draw_tracks(frame.copy(), tracks, track_colors)
             writer.write(annotated)
             frame_idx += 1
             progress = int((frame_idx / max(total, 1)) * 100)
@@ -465,6 +610,10 @@ async def _run_tracking_job(job_id, video_path, output_path, metrics_path,
                 "map_small": None,
                 "map_note": "COCO metrics unavailable (no annotation file found).",
             })
+        summary["cloth_color_enabled"] = bool(color_enabled)
+        summary["cloth_color_segmenter"] = color_segmenter if color_enabled else None
+        summary["top_color_frequency"] = dict(sorted(color_counts_top.items(), key=lambda x: x[1], reverse=True)[:8])
+        summary["bottom_color_frequency"] = dict(sorted(color_counts_bottom.items(), key=lambda x: x[1], reverse=True)[:8])
         with open(metrics_path, "w") as f:
             json.dump(summary, f, indent=2)
 

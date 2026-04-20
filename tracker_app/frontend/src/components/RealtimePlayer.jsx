@@ -18,6 +18,7 @@ export default function RealtimePlayer({
   const [error, setError] = useState(null);
   const [isStopping, setIsStopping] = useState(false);
   const [effectivePipeline, setEffectivePipeline] = useState(null);
+  const uiUpdateAtRef = useRef(0);
 
   const connect = useCallback(() => {
     const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -35,6 +36,8 @@ export default function RealtimePlayer({
           tracker: modelConfig.tracker,
           detector: modelConfig.detector,
           reid_model: modelConfig.reidModel || null,
+          color_enabled: modelConfig.colorEnabled ?? true,
+          color_segmenter: modelConfig.colorSegmenter || "grabcut",
           conf_threshold: modelConfig.confThreshold,
         }),
       );
@@ -48,14 +51,25 @@ export default function RealtimePlayer({
         if (imgRef.current) {
           imgRef.current.src = `data:image/jpeg;base64,${msg.frame}`;
         }
-        setLiveMetrics({ fps: msg.fps, track_count: msg.track_count });
-        setFrameInfo({ current: msg.frame_idx, total: msg.total_frames });
+        const now = performance.now();
+        if (now - uiUpdateAtRef.current >= 120) {
+          setLiveMetrics({
+            fps: msg.fps,
+            tracker_fps: msg.tracker_fps,
+            track_count: msg.track_count,
+          });
+          setFrameInfo({ current: msg.frame_idx, total: msg.total_frames });
+          uiUpdateAtRef.current = now;
+        }
       } else if (msg.type === "done") {
         const resolvedPipeline = msg.pipeline || effectivePipeline;
         if (resolvedPipeline) setEffectivePipeline(resolvedPipeline);
         setFinalMetrics(msg.metrics);
         setStatus("done");
-        onJobComplete?.({ config: resolvedPipeline || modelConfig, metrics: msg.metrics });
+        onJobComplete?.({
+          config: resolvedPipeline || modelConfig,
+          metrics: msg.metrics,
+        });
       } else if (msg.error) {
         setError(msg.error);
         setStatus("error");
@@ -101,6 +115,12 @@ export default function RealtimePlayer({
     ["Tracker", shownPipeline.tracker],
     ["Detector", shownPipeline.detector],
     ["Re-ID", shownPipeline.reid_model || "none"],
+    [
+      "Color",
+      shownPipeline.cloth_color?.enabled
+        ? shownPipeline.cloth_color?.segmenter
+        : "off",
+    ],
     ["Embedder", shownPipeline.embedder || "n/a"],
   ];
 

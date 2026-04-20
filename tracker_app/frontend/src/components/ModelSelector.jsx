@@ -112,7 +112,15 @@ function Select({ label, value, options, onChange, disabled }) {
 }
 
 export default function ModelSelector({ config, onChange }) {
-  const { framework, tracker, detector, reidModel, confThreshold } = config;
+  const {
+    framework,
+    tracker,
+    detector,
+    reidModel,
+    confThreshold,
+    colorEnabled,
+    colorSegmenter,
+  } = config;
   const cap = CAPABILITIES[framework];
   const reidEnabled = cap.reidSupport[tracker] && framework !== "fairmot";
 
@@ -130,15 +138,27 @@ export default function ModelSelector({ config, onChange }) {
       detector: newDetector,
       reidModel: newReid,
       confThreshold,
+      colorEnabled,
+      colorSegmenter,
     });
   }, [framework]); // eslint-disable-line
 
   // Auto-reset reid when tracker changes
   useEffect(() => {
-    if (!cap.reidSupport[tracker]) {
+    const supportsReid = !!cap.reidSupport[tracker] && framework !== "fairmot";
+    if (!supportsReid) {
       onChange((c) => ({ ...c, reidModel: null }));
+      return;
     }
-  }, [tracker]); // eslint-disable-line
+
+    // Critical: ensure state has a real selected value. The select control can
+    // display a fallback value even when config.reidModel is null.
+    const fallback = cap.reidModels[0] || null;
+    if (!fallback) return;
+    if (!reidModel || !cap.reidModels.includes(reidModel)) {
+      onChange((c) => ({ ...c, reidModel: fallback }));
+    }
+  }, [framework, tracker, reidModel]); // eslint-disable-line
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
@@ -350,6 +370,55 @@ export default function ModelSelector({ config, onChange }) {
             background: "transparent",
             cursor: "pointer",
           }}
+        />
+      </div>
+
+      {/* Cloth color settings */}
+      <div
+        style={{
+          padding: "10px",
+          borderRadius: "8px",
+          border: "1px solid var(--border)",
+          background: "var(--bg3)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "8px",
+        }}
+      >
+        <div
+          style={{
+            fontSize: "11px",
+            fontWeight: 600,
+            letterSpacing: "1px",
+            color: "var(--text3)",
+          }}
+        >
+          CLOTH COLOR RECOGNITION
+        </div>
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            fontSize: "12px",
+            color: "var(--text2)",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={!!colorEnabled}
+            onChange={(e) =>
+              onChange((c) => ({ ...c, colorEnabled: e.target.checked }))
+            }
+          />
+          Enable cloth color recognition
+        </label>
+        <Select
+          label="COLOR SEGMENTER"
+          value={colorSegmenter || "grabcut"}
+          options={["grabcut", "yolov8n-seg", "yolov8s-seg"]}
+          onChange={(v) => onChange((c) => ({ ...c, colorSegmenter: v }))}
+          disabled={!colorEnabled}
         />
       </div>
     </div>
