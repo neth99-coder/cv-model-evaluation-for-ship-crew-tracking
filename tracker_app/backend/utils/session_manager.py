@@ -24,6 +24,13 @@ class SessionManager:
         with self._lock:
             return dict(self._jobs.get(job_id, {})) or None
 
+    def list_jobs(self) -> list[dict]:
+        with self._lock:
+            return [
+                {"job_id": job_id, **dict(data)}
+                for job_id, data in self._jobs.items()
+            ]
+
     def set_ws_active(self, session_id: str, active: bool):
         with self._lock:
             self._ws_active[session_id] = active

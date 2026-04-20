@@ -61,7 +61,7 @@ export default function Navbar({ page, setPage }) {
         />
         <NavTab
           icon={ScanFace}
-          label="Face Detection"
+          label="Face Recognition"
           active={page === "face"}
           onClick={() => setPage("face")}
         />

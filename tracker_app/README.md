@@ -1,6 +1,6 @@
-# TrackVision — Multi-Model Person Tracking System
+# TrackVision — Tracking And Face Recognition Evaluation App
 
-A full-stack application for running and evaluating person tracking pipelines using BOXMOT, FairMOT, and DeepSORT with pluggable detectors and Re-ID models.
+A full-stack application for running and evaluating person tracking pipelines and face-recognition runs. The tracking side supports BOXMOT, FairMOT, and DeepSORT with pluggable detectors and Re-ID models, while the face-recognition side supports multiple recognizers, uploaded or built-in reference galleries, saved outputs, and run comparison tables.
 
 ---
 
@@ -12,6 +12,8 @@ tracker_app/
 │   ├── main.py                  # FastAPI application
 │   ├── evaluate.py              # Standalone CLI evaluation script
 │   ├── requirements.txt
+│   ├── routers/
+│   │   └── face_recognition.py  # Face-recognition API + background jobs
 │   ├── trackers/
 │   │   ├── __init__.py
 │   │   ├── boxmot_tracker.py    # BOXMOT wrapper (ByteTrack/BoT-SORT/OC-SORT/DeepOCSORT/StrongSORT)
@@ -22,9 +24,9 @@ tracker_app/
 │   │   ├── session_manager.py   # In-memory job/session state
 │   │   └── metrics.py           # Tracking metrics collector
 │   ├── test/
-│   │   └── test.mp4             # ← Place your test video here
-│   ├── uploads/                 # Uploaded videos (auto-created)
-│   └── outputs/                 # Job outputs + evaluation results (auto-created)
+│   │   └── test.mp4             # ← Place your tracking test video here
+│   ├── uploads/                 # Uploaded videos/images (auto-created)
+│   └── outputs/                 # Tracking outputs, face outputs, evaluation results
 │
 └── frontend/
     ├── index.html
@@ -36,14 +38,17 @@ tracker_app/
         ├── index.css
         ├── components/
         │   ├── Navbar.jsx
-        │   ├── ModelSelector.jsx     # Framework/tracker/detector/reid selection
-        │   ├── VideoUploader.jsx     # Drag-drop video upload
-        │   ├── RealtimePlayer.jsx    # WebSocket live stream viewer
-        │   ├── FileTrackingJob.jsx   # Background job submission + polling
-        │   └── MetricsPanel.jsx      # FPS/track count metrics display
+        │   ├── ModelSelector.jsx         # Framework/tracker/detector/reid selection
+        │   ├── VideoUploader.jsx         # Drag-drop video upload
+        │   ├── RealtimePlayer.jsx        # WebSocket live stream viewer
+        │   ├── FileTrackingJob.jsx       # Background tracking job submission + polling
+        │   ├── ComparisonPanel.jsx       # Tracking evaluation table
+        │   ├── FaceRunComparisonPanel.jsx # Face-recognition run table
+        │   └── MetricsPanel.jsx          # FPS/track count metrics display
         └── pages/
-            ├── ObjectTracking.jsx    # Main tracking page
-            └── FaceDetection.jsx     # Face detection page
+            ├── ObjectTracking.jsx        # Main tracking page
+            ├── FaceDetection.jsx         # Face-recognition page
+            └── FaceRecognition.jsx       # Alias to FaceDetection for compatibility
 ```
 
 ---
@@ -62,7 +67,7 @@ pip install -r requirements.txt
 cp /path/to/your/video.mp4 test/test.mp4
 
 # Start API server
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 ### 2. Frontend
@@ -70,8 +75,26 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```bash
 cd frontend
 npm install
-npm run dev       # http://localhost:3000
+npm run dev       # http://localhost:5173
 ```
+
+---
+
+## Main Workflows
+
+### Object Tracking
+
+- Upload or choose a server test video.
+- Configure framework, tracker, detector, Re-ID, and color options.
+- Run either real-time WebSocket tracking or file-based processing.
+- Compare completed tracking runs in the built-in evaluation table.
+
+### Face Recognition
+
+- Choose a face model from the face-recognition page.
+- Upload an image/video or select a built-in test asset.
+- Add built-in reference faces and optional uploaded named samples.
+- Start a background face run, poll its status, preview/download the annotated output, and compare completed runs in the face-run evaluation table.
 
 ---
 
@@ -132,11 +155,14 @@ curl "http://localhost:8000/api/evaluate/{eval_id}"
 
 ## API Reference
 
+### Tracking API
+
 | Method | Endpoint                       | Description                             |
 | ------ | ------------------------------ | --------------------------------------- |
 | GET    | `/api/capabilities`            | Tracker/detector/reid capability matrix |
 | POST   | `/api/upload`                  | Upload a video file                     |
 | GET    | `/api/test-video`              | Get default test video info             |
+| GET    | `/api/test-videos`             | List available test videos              |
 | POST   | `/api/track/file`              | Start background tracking job           |
 | GET    | `/api/track/status/{job_id}`   | Poll job status + progress              |
 | GET    | `/api/track/download/{job_id}` | Download output video                   |
@@ -145,6 +171,23 @@ curl "http://localhost:8000/api/evaluate/{eval_id}"
 | POST   | `/api/track/stop/{session_id}` | Stop a live session                     |
 | POST   | `/api/evaluate`                | Run batch evaluation                    |
 | GET    | `/api/evaluate/{eval_id}`      | Get evaluation results                  |
+
+### Face Recognition API
+
+| Method | Endpoint                            | Description                                         |
+| ------ | ----------------------------------- | --------------------------------------------------- |
+| GET    | `/api/face/models`                  | List available face-recognition models              |
+| GET    | `/api/face/test-assets`             | List built-in media assets and reference faces      |
+| POST   | `/api/face/upload`                  | Upload face-recognition target media                |
+| POST   | `/api/face/run/file`                | Start a background face-recognition run             |
+| GET    | `/api/face/run/status/{job_id}`     | Poll face run status, progress, stats, detections   |
+| GET    | `/api/face/run/download/{job_id}`   | Download the annotated face-recognition output      |
+| GET    | `/api/face/runs`                    | List previously created face-recognition runs       |
+
+### Legacy Compatibility
+
+- Legacy face routes are still mounted under `/face-recognition/...` for compatibility with older clients.
+- New frontend code uses the normalized `/api/face/...` API shape so face jobs behave more like tracking jobs.
 
 ---
 
@@ -155,6 +198,9 @@ curl "http://localhost:8000/api/evaluate/{eval_id}"
 - **FairMOT Re-ID**: FairMOT uses a built-in joint detection+embedding head — no external Re-ID model is selected.
 - **WebSocket streaming**: Real-time mode sends JPEG frames over WebSocket at the source video's native FPS.
 - **Job polling**: File mode uses 1-second polling against the `/api/track/status/{job_id}` endpoint.
+- **Normalized face jobs**: Face recognition now follows the same general pattern as tracking: select/upload input, start a background file run, poll status, then open/download the result.
+- **Face evaluation table**: The face-recognition page keeps a run table with metrics such as detected faces, identified faces, unknown faces, average match confidence, inference time, and gallery size.
+- **Dev proxy**: Vite proxies both `/api` and `/face-recognition` to the backend, defaulting to `127.0.0.1:8000`. Optional overrides are available through `VITE_BACKEND_URL` and `VITE_BACKEND_WS_URL`.
 
 ---
 

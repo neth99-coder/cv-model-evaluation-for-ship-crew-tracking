@@ -31,6 +31,13 @@ torchreid>=0.2.5
 gdown>=5.2.0
 tensorboard>=2.16.0
 
+# Face recognition
+insightface>=0.7.3
+onnxruntime>=1.18.0
+deepface>=0.0.93
+tf-keras>=2.16.0
+requests>=2.32.0
+
 # ── Optional ─────────────────────────────────────────────────────────────────
 # sort-python>=1.1.0         # Fallback pure SORT tracker
 # lap>=0.4.0                 # Hungarian algorithm (required by some trackers)

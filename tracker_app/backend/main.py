@@ -24,6 +24,7 @@ from utils.session_manager import SessionManager
 from utils.metrics import TrackingMetrics
 from utils.coco_metrics import CocoMetricEvaluator, resolve_coco_annotation_path
 from utils.cloth_color import ClothColorEngine
+from routers import face_recognition
 
 app = FastAPI(title="Multi-Tracker Person Tracking API", version="1.0.0")
 
@@ -693,3 +694,6 @@ async def _run_evaluation(eval_id, video_path, coco_annotations):
         "results": results,
         "output_file": str(out_path),
     })
+
+app.include_router(face_recognition.router, prefix="/face-recognition", tags=["Face Recognition"])
+app.include_router(face_recognition.api_router, tags=["Face Recognition API"])
