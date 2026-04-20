@@ -1,0 +1,27 @@
+# ── Core ──────────────────────────────────────────────────────────
+numpy>=1.24
+opencv-python>=4.8          # or opencv-python-headless on servers
+scipy>=1.10
+scikit-learn>=1.3
+
+# ── Colour naming ─────────────────────────────────────────────────
+webcolors>=1.13             # optional; we use our own KD-Tree palette
+
+# ── Segmentation back-ends (install what you need) ────────────────
+# GrabCut uses pure OpenCV — no extra install needed.
+
+# YOLO-based segmenters (YOLOv8-seg, YOLOv9-seg):
+ultralytics>=8.0            # pip install ultralytics
+torch>=2.0               # required by ultralytics; install separately:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+
+# MediaPipe segmenter:
+mediapipe>=0.10             # pip install mediapipe
+
+# Background subtraction — uses OpenCV only (already listed above)
+
+# ── SAHI (optional, improves small-object detection) ─────────────
+sahi>=0.11               # pip install sahi
+
+# ── Visualisation / reporting ─────────────────────────────────────
+matplotlib>=3.7          # optional, for offline plots
