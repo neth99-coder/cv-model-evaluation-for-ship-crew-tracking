@@ -9,6 +9,16 @@ import subprocess
 import sys
 
 
+DEEPSORT_KWARGS = {
+    # Keep tracks alive longer and allow appearance matching across larger motion gaps.
+    "max_iou_distance": 0.85,
+    "max_age": 90,
+    "n_init": 1,
+    "max_cosine_distance": 0.35,
+    "nn_budget": 200,
+}
+
+
 def _install_packages(packages: list[str]) -> None:
     """Install required Python packages using the active interpreter."""
     print(f"[DeepSORT] Installing missing packages: {packages}")
@@ -138,11 +148,10 @@ class DeepSORTTracker:
             # deep_sort_realtime package
             from deep_sort_realtime.deepsort_tracker import DeepSort
             self._tracker = DeepSort(
-                max_age=30,
-                n_init=3,
                 embedder=embedder,
                 embedder_model_name=embedder_model_name,
                 half=False,
+                **DEEPSORT_KWARGS,
             )
             print(
                 f"[DeepSORT] Initialized with reid={self.reid_model}, "
@@ -193,9 +202,6 @@ class DeepSORTTracker:
         if self._tracker is None:
             raise RuntimeError("DeepSORT tracker is not initialized")
 
-        if len(dets) == 0:
-            return np.empty((0, 5))
-
         try:
             # deep_sort_realtime format: [[x1,y1,w,h], conf, class]
             ds_dets = []
@@ -205,7 +211,7 @@ class DeepSORTTracker:
             tracks = self._tracker.update_tracks(ds_dets, frame=frame)
             result = []
             for t in tracks:
-                if not t.is_confirmed():
+                if not t.is_confirmed() or t.time_since_update > 0:
                     continue
                 ltrb = t.to_ltrb()
                 # deep_sort_realtime does not always expose stable detection confidence per track.
