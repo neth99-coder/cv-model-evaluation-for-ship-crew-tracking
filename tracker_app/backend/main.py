@@ -145,6 +145,7 @@ async def track_to_file(
     tracker: str = "bytetrack",
     detector: str = "yolov8n",
     reid_model: Optional[str] = None,
+    manual_reid: bool = False,
     coco_annotations: Optional[str] = None,
     color_enabled: bool = True,
     color_segmenter: str = "grabcut",
@@ -165,6 +166,7 @@ async def track_to_file(
         "tracker": tracker,
         "detector": detector,
         "reid_model": reid_model,
+        "manual_reid": manual_reid,
         "coco_annotations": coco_annotations,
         "color_enabled": color_enabled,
         "color_segmenter": color_segmenter,
@@ -176,7 +178,7 @@ async def track_to_file(
     background_tasks.add_task(
         _run_tracking_job,
         job_id, video_path, output_path, metrics_path,
-        framework, tracker, detector, reid_model, coco_annotations,
+        framework, tracker, detector, reid_model, manual_reid, coco_annotations,
         color_enabled, color_segmenter, conf_threshold
     )
 
@@ -231,11 +233,12 @@ async def realtime_tracking(websocket: WebSocket, session_id: str):
         tracker_name = config.get("tracker", "bytetrack")
         detector = config.get("detector", "yolov8n")
         reid_model = config.get("reid_model")
+        manual_reid = bool(config.get("manual_reid", False))
         conf = float(config.get("conf_threshold", 0.4))
         color_enabled = bool(config.get("color_enabled", True))
         color_segmenter = config.get("color_segmenter", "grabcut")
 
-        tracker = _build_tracker(framework, tracker_name, detector, reid_model, conf)
+        tracker = _build_tracker(framework, tracker_name, detector, reid_model, manual_reid, conf)
         runtime_pipeline = _runtime_pipeline(tracker, framework, tracker_name, detector, reid_model)
         if color_enabled:
             runtime_pipeline["cloth_color"] = {"enabled": True, "segmenter": color_segmenter}
@@ -416,13 +419,13 @@ def _list_test_videos() -> list[dict]:
     return videos
 
 
-def _build_tracker(framework, tracker_name, detector, reid_model, conf):
+def _build_tracker(framework, tracker_name, detector, reid_model, manual_reid, conf):
     if framework == "boxmot":
-        return BoxMOTTracker(tracker_name, detector, reid_model, conf)
+        return BoxMOTTracker(tracker_name, detector, reid_model, conf, manual_reid=manual_reid)
     elif framework == "fairmot":
         return FairMOTTracker(detector, conf)
     elif framework == "deepsort":
-        return DeepSORTTracker(detector, reid_model, conf)
+        return DeepSORTTracker(detector, reid_model, conf, manual_reid=manual_reid)
     raise ValueError(f"Unknown framework: {framework}")
 
 
@@ -536,11 +539,11 @@ def _as_int_track_id(value) -> int:
 
 
 async def _run_tracking_job(job_id, video_path, output_path, metrics_path,
-                             framework, tracker_name, detector, reid_model, coco_annotations,
+                             framework, tracker_name, detector, reid_model, manual_reid, coco_annotations,
                              color_enabled, color_segmenter, conf):
     session_manager.update_job(job_id, {"status": "running", "progress": 0})
     try:
-        tracker = _build_tracker(framework, tracker_name, detector, reid_model, conf)
+        tracker = _build_tracker(framework, tracker_name, detector, reid_model, manual_reid, conf)
         runtime_pipeline = _runtime_pipeline(tracker, framework, tracker_name, detector, reid_model)
         if color_enabled:
             runtime_pipeline["cloth_color"] = {"enabled": True, "segmenter": color_segmenter}
@@ -639,7 +642,7 @@ async def _run_evaluation(eval_id, video_path, coco_annotations):
     results = []
     for framework, tracker_name, detector, reid in combinations:
         try:
-            tracker = _build_tracker(framework, tracker_name, detector, reid, 0.4)
+            tracker = _build_tracker(framework, tracker_name, detector, reid, False, 0.4)
             coco_path = resolve_coco_annotation_path(video_path, coco_annotations)
             coco_eval = CocoMetricEvaluator(coco_path) if coco_path else None
             cap = cv2.VideoCapture(str(video_path))

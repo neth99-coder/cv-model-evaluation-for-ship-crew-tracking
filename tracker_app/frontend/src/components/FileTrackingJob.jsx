@@ -25,8 +25,9 @@ export default function FileTrackingJob({
         framework: modelConfig.framework,
         tracker: modelConfig.tracker,
         detector: modelConfig.detector,
+        manual_reid: modelConfig.manualReid ?? false,
         conf_threshold: modelConfig.confThreshold,
-        color_enabled: modelConfig.colorEnabled ?? true,
+        color_enabled: modelConfig.colorEnabled ?? false,
         color_segmenter: modelConfig.colorSegmenter || "grabcut",
       };
       if (modelConfig.reidModel) params.reid_model = modelConfig.reidModel;
@@ -106,6 +107,7 @@ export default function FileTrackingJob({
             ["Tracker", modelConfig.tracker],
             ["Detector", modelConfig.detector],
             ["Re-ID", modelConfig.reidModel || "none"],
+            ["Manual Re-ID", modelConfig.manualReid ? "on" : "off"],
             [
               "Color",
               modelConfig.colorEnabled

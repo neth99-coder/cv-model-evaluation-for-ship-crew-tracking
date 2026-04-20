@@ -18,6 +18,7 @@ export default function RealtimePlayer({
   const [error, setError] = useState(null);
   const [isStopping, setIsStopping] = useState(false);
   const [effectivePipeline, setEffectivePipeline] = useState(null);
+  const [hasReceivedFrame, setHasReceivedFrame] = useState(false);
   const uiUpdateAtRef = useRef(0);
 
   const connect = useCallback(() => {
@@ -36,7 +37,8 @@ export default function RealtimePlayer({
           tracker: modelConfig.tracker,
           detector: modelConfig.detector,
           reid_model: modelConfig.reidModel || null,
-          color_enabled: modelConfig.colorEnabled ?? true,
+          manual_reid: modelConfig.manualReid ?? false,
+          color_enabled: modelConfig.colorEnabled ?? false,
           color_segmenter: modelConfig.colorSegmenter || "grabcut",
           conf_threshold: modelConfig.confThreshold,
         }),
@@ -48,6 +50,7 @@ export default function RealtimePlayer({
       if (msg.type === "pipeline") {
         setEffectivePipeline(msg.pipeline || null);
       } else if (msg.type === "frame") {
+        setHasReceivedFrame(true);
         if (imgRef.current) {
           imgRef.current.src = `data:image/jpeg;base64,${msg.frame}`;
         }
@@ -115,6 +118,7 @@ export default function RealtimePlayer({
     ["Tracker", shownPipeline.tracker],
     ["Detector", shownPipeline.detector],
     ["Re-ID", shownPipeline.reid_model || "none"],
+    ["Manual Re-ID", shownPipeline.manual_reid ? "on" : "off"],
     [
       "Color",
       shownPipeline.cloth_color?.enabled
@@ -162,6 +166,34 @@ export default function RealtimePlayer({
               }}
             />
             Connecting to tracker…
+          </div>
+        )}
+        {status === "streaming" && !hasReceivedFrame && (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "rgba(0,0,0,0.55)",
+              zIndex: 2,
+            }}
+          >
+            <div style={{ textAlign: "center", color: "var(--text2)" }}>
+              <div
+                style={{
+                  width: 36,
+                  height: 36,
+                  border: "3px solid var(--accent)",
+                  borderTopColor: "transparent",
+                  borderRadius: "50%",
+                  animation: "spin 0.8s linear infinite",
+                  margin: "0 auto 12px",
+                }}
+              />
+              Buffering live video…
+            </div>
           </div>
         )}
         {status === "error" && (

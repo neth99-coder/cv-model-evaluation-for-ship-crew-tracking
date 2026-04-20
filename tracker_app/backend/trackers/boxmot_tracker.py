@@ -8,6 +8,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+from trackers.reid_helpers import AppearanceEncoder, StableIdentityMemory, normalize_embeddings
+
 REID_SUPPORTED = {"botsort", "deepocsort", "strongsort"}
 
 REID_TRACKER_KWARGS = {
@@ -37,11 +39,6 @@ REID_TRACKER_KWARGS = {
         "max_age": 300,
     },
 }
-
-STABLE_ID_MAX_AGE = 300
-STABLE_ID_MIN_SIM = 0.5
-STABLE_ID_MAX_CENTER_DIST = 0.3
-
 
 YOLO_WEIGHTS = {
     "yolov8n": "yolov8n.pt",
@@ -77,19 +74,23 @@ class BoxMOTTracker:
     """
 
     def __init__(self, tracker_type: str = "bytetrack", detector: str = "yolov8n",
-                 reid_model: str | None = None, conf: float = 0.4):
+                 reid_model: str | None = None, conf: float = 0.4,
+                 manual_reid: bool = False):
         self.tracker_type = tracker_type
         self.detector_name = detector
         self.reid_model = reid_model if tracker_type in REID_SUPPORTED else None
         self.conf = conf
+        self.manual_reid = bool(manual_reid)
+        self._manual_reid_model = reid_model or ("osnet_x0_25" if self.manual_reid else None)
         self._tracker = None
         self._detector = None
         self._detector_install_attempted = False
         self._tracker_install_attempted = False
-        self._frame_idx = 0
-        self._stable_next_id = 1
-        self._stable_id_by_internal: dict[int, int] = {}
-        self._stable_memory: dict[int, dict] = {}
+        self._appearance_encoder = (
+            AppearanceEncoder(self._manual_reid_model, "BoxMOT")
+            if self._manual_reid_model else None
+        )
+        self._stable_memory = StableIdentityMemory()
         self._init_detector()
         self._init_tracker()
 
@@ -239,6 +240,8 @@ class BoxMOTTracker:
             "tracker": self.tracker_type,
             "detector": self.detector_name,
             "reid_model": self.reid_model,
+            "manual_reid": self.manual_reid,
+            "manual_reid_model": self._manual_reid_model,
         }
 
     # ── Public API ───────────────────────────────────────────────────────────
@@ -256,14 +259,19 @@ class BoxMOTTracker:
         try:
             if len(dets) == 0:
                 dets_in = np.empty((0, 6))
+                embs = None
             else:
                 dets_in = dets[:, :6]
-            tracks = self._tracker.update(dets_in, frame)
-            self._frame_idx += 1
-            if tracks is None or len(tracks) == 0:
-                self._stable_id_by_internal = {}
-                return np.empty((0, 5))
+                embs = self._extract_detection_embeddings(frame, dets_in[:, :4])
             if self.tracker_type in REID_SUPPORTED:
+                tracks = self._tracker.update(dets_in, frame, embs=embs)
+            else:
+                tracks = self._tracker.update(dets_in, frame)
+            self._stable_memory.step()
+            if tracks is None or len(tracks) == 0:
+                self._stable_memory.clear_active_mapping()
+                return np.empty((0, 5))
+            if self.manual_reid:
                 tracks = self._stabilize_track_ids(frame, tracks)
             # Common boxmot output includes confidence at index 5.
             if tracks.shape[1] > 5:
@@ -275,93 +283,32 @@ class BoxMOTTracker:
     def _stabilize_track_ids(self, frame: np.ndarray, tracks: np.ndarray) -> np.ndarray:
         boxes = np.asarray(tracks[:, :4], dtype=float)
         internal_ids = [int(float(track_id)) for track_id in tracks[:, 4]]
-        embeddings = self._extract_track_embeddings(frame, boxes)
-        if embeddings is None or len(embeddings) != len(tracks):
-            return tracks
+        embeddings = self._extract_detection_embeddings(frame, boxes)
+        return self._stable_memory.reassign(
+            tracks=tracks,
+            boxes=boxes,
+            internal_ids=internal_ids,
+            embeddings=embeddings,
+            stringify_ids=False,
+        )
 
-        self._prune_stable_memory()
-        assigned_stable_ids = set()
-        current_mapping: dict[int, int] = {}
-        stabilized = np.array(tracks, dtype=object, copy=True)
+    def _extract_detection_embeddings(self, frame: np.ndarray, boxes: np.ndarray) -> np.ndarray | None:
+        if boxes is None or len(boxes) == 0:
+            return None
 
-        for idx, internal_id in enumerate(internal_ids):
-            stable_id = self._stable_id_by_internal.get(internal_id)
-            if stable_id is None:
-                stable_id = self._match_stable_id(boxes[idx], embeddings[idx], assigned_stable_ids)
-                if stable_id is None:
-                    stable_id = self._stable_next_id
-                    self._stable_next_id += 1
-
-            assigned_stable_ids.add(stable_id)
-            current_mapping[internal_id] = stable_id
-            stabilized[idx, 4] = stable_id
-            self._stable_memory[stable_id] = {
-                "embedding": embeddings[idx],
-                "bbox": boxes[idx],
-                "last_seen": self._frame_idx,
-            }
-
-        self._stable_id_by_internal = current_mapping
-        return stabilized
-
-    def _extract_track_embeddings(self, frame: np.ndarray, boxes: np.ndarray) -> np.ndarray | None:
+        native_embeddings = None
         model = getattr(self._tracker, "model", None)
-        if model is None:
+        if model is not None and hasattr(model, "get_features"):
+            try:
+                native_embeddings = normalize_embeddings(model.get_features(boxes, frame))
+            except Exception:
+                native_embeddings = None
+
+        if native_embeddings is not None and len(native_embeddings) == len(boxes):
+            return native_embeddings
+        if self._appearance_encoder is None:
             return None
-        try:
-            embeddings = model.get_features(boxes, frame)
-        except Exception:
-            return None
-        if embeddings is None or len(embeddings) == 0:
-            return None
-        embeddings = np.asarray(embeddings, dtype=float)
-        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-        norms = np.clip(norms, 1e-8, None)
-        return embeddings / norms
-
-    def _match_stable_id(
-        self,
-        box: np.ndarray,
-        embedding: np.ndarray,
-        assigned_stable_ids: set[int],
-    ) -> int | None:
-        best_stable_id = None
-        best_score = -1.0
-
-        for stable_id, state in self._stable_memory.items():
-            if stable_id in assigned_stable_ids:
-                continue
-
-            age = self._frame_idx - int(state["last_seen"])
-            if age <= 0 or age > STABLE_ID_MAX_AGE:
-                continue
-
-            prev_embedding = state.get("embedding")
-            prev_box = state.get("bbox")
-            if prev_embedding is None or prev_box is None:
-                continue
-
-            similarity = float(np.dot(embedding, prev_embedding))
-            if similarity < STABLE_ID_MIN_SIM:
-                continue
-
-            if _center_distance_ratio(box, prev_box) > STABLE_ID_MAX_CENTER_DIST:
-                continue
-
-            if similarity > best_score:
-                best_score = similarity
-                best_stable_id = stable_id
-
-        return best_stable_id
-
-    def _prune_stable_memory(self) -> None:
-        expired_ids = [
-            stable_id
-            for stable_id, state in self._stable_memory.items()
-            if self._frame_idx - int(state["last_seen"]) > STABLE_ID_MAX_AGE
-        ]
-        for stable_id in expired_ids:
-            self._stable_memory.pop(stable_id, None)
+        return self._appearance_encoder.extract(frame, boxes)
 
     # ── Mock helpers (no deps) ───────────────────────────────────────────────
 

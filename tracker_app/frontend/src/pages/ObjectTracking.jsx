@@ -6,25 +6,44 @@ import RealtimePlayer from "../components/RealtimePlayer.jsx";
 import FileTrackingJob from "../components/FileTrackingJob.jsx";
 import ComparisonPanel from "../components/ComparisonPanel.jsx";
 
+const CONFIG_STORAGE_KEY = "tracker_app.object_tracking.config";
+
 const DEFAULT_CONFIG = {
   framework: "boxmot",
   tracker: "bytetrack",
   detector: "yolov8n",
   reidModel: null,
+  manualReid: false,
   confThreshold: 0.4,
-  colorEnabled: true,
+  colorEnabled: false,
   colorSegmenter: "grabcut",
 };
 
 const MODE_REALTIME = "realtime";
 const MODE_FILE = "file";
 
+function loadStoredConfig() {
+  if (typeof window === "undefined") return DEFAULT_CONFIG;
+  try {
+    const raw = window.localStorage.getItem(CONFIG_STORAGE_KEY);
+    if (!raw) return DEFAULT_CONFIG;
+    const parsed = JSON.parse(raw);
+    return { ...DEFAULT_CONFIG, ...parsed };
+  } catch {
+    return DEFAULT_CONFIG;
+  }
+}
+
 export default function ObjectTracking() {
-  const [config, setConfig] = useState(DEFAULT_CONFIG);
+  const [config, setConfig] = useState(loadStoredConfig);
   const [video, setVideo] = useState(null); // { video_id, filename }
   const [mode, setMode] = useState(null); // null | 'realtime' | 'file'
   const [activeView, setActiveView] = useState("config"); // 'config' | 'realtime' | 'file'
   const [runHistory, setRunHistory] = useState([]); // completed run records
+
+  React.useEffect(() => {
+    window.localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(config));
+  }, [config]);
 
   const formatPipelineLabel = (cfg) => {
     if (!cfg) return "unknown pipeline";

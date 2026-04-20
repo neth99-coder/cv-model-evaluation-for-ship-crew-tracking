@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import { ChevronDown, Info } from "lucide-react";
 
 const CAPABILITIES = {
@@ -117,19 +117,33 @@ export default function ModelSelector({ config, onChange }) {
     tracker,
     detector,
     reidModel,
+    manualReid,
     confThreshold,
     colorEnabled,
     colorSegmenter,
   } = config;
   const cap = CAPABILITIES[framework];
   const reidEnabled = cap.reidSupport[tracker] && framework !== "fairmot";
+  const manualReidEnabled = framework === "boxmot" || framework === "deepsort";
+  const mountedRef = useRef(false);
 
   // Auto-reset when framework changes
   useEffect(() => {
-    const newTracker = cap.trackers[0];
-    const newDetector = cap.detectors[0];
+    if (!mountedRef.current) {
+      mountedRef.current = true;
+      return;
+    }
+    const newTracker = cap.trackers.includes(tracker) ? tracker : cap.trackers[0];
+    const newDetector = cap.detectors.includes(detector)
+      ? detector
+      : cap.detectors[0];
     const newReid =
-      cap.reidModels[0] !== "built-in (no selection needed)"
+      !!cap.reidSupport[newTracker] &&
+      cap.reidModels[0] !== "built-in (no selection needed)" &&
+      reidModel &&
+      cap.reidModels.includes(reidModel)
+        ? reidModel
+        : cap.reidModels[0] !== "built-in (no selection needed)"
         ? cap.reidModels[0]
         : null;
     onChange({
@@ -137,11 +151,22 @@ export default function ModelSelector({ config, onChange }) {
       tracker: newTracker,
       detector: newDetector,
       reidModel: newReid,
+      manualReid: manualReidEnabled ? !!manualReid : false,
       confThreshold,
       colorEnabled,
       colorSegmenter,
     });
   }, [framework]); // eslint-disable-line
+
+  useEffect(() => {
+    if (cap.trackers.includes(tracker)) return;
+    onChange((c) => ({ ...c, tracker: cap.trackers[0] }));
+  }, [cap, tracker]); // eslint-disable-line
+
+  useEffect(() => {
+    if (manualReidEnabled || !manualReid) return;
+    onChange((c) => ({ ...c, manualReid: false }));
+  }, [manualReidEnabled, manualReid]); // eslint-disable-line
 
   // Auto-reset reid when tracker changes
   useEffect(() => {
@@ -319,6 +344,57 @@ export default function ModelSelector({ config, onChange }) {
             {framework === "fairmot"
               ? "— built into model architecture —"
               : "— disabled for this tracker —"}
+          </div>
+        )}
+      </div>
+
+      <div
+        style={{
+          padding: "10px",
+          borderRadius: "8px",
+          border: "1px solid var(--border)",
+          background: "var(--bg3)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "8px",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            fontSize: "11px",
+            fontWeight: 600,
+            letterSpacing: "1px",
+            color: "var(--text3)",
+          }}
+        >
+          MANUAL RE-ID
+          <Info size={12} style={{ color: "var(--text3)" }} />
+        </div>
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            fontSize: "12px",
+            color: manualReidEnabled ? "var(--text2)" : "var(--text3)",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={!!manualReid}
+            onChange={(e) =>
+              onChange((c) => ({ ...c, manualReid: e.target.checked }))
+            }
+            disabled={!manualReidEnabled}
+          />
+          Enable manual Re-ID (ID stitching)
+        </label>
+        {!manualReidEnabled && (
+          <div style={{ fontSize: "11px", color: "var(--text3)" }}>
+            Available only for BoxMOT and DeepSORT.
           </div>
         )}
       </div>

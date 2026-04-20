@@ -8,14 +8,16 @@ import numpy as np
 import subprocess
 import sys
 
+from trackers.reid_helpers import AppearanceEncoder, StableIdentityMemory, normalize_embeddings
+
 
 DEEPSORT_KWARGS = {
     # Keep tracks alive longer and allow appearance matching across larger motion gaps.
     "max_iou_distance": 0.85,
-    "max_age": 90,
+    "max_age": 120,
     "n_init": 1,
-    "max_cosine_distance": 0.35,
-    "nn_budget": 200,
+    "max_cosine_distance": 0.30,
+    "nn_budget": 300,
 }
 
 
@@ -54,18 +56,17 @@ class DeepSORTTracker:
     """
 
     def __init__(self, detector: str = "yolov8n", reid_model: str = "osnet_x0_25",
-                 conf: float = 0.4):
+                 conf: float = 0.4, manual_reid: bool = False):
         self.detector_name = detector
         self.reid_model = reid_model
         self.conf = conf
+        self.manual_reid = bool(manual_reid)
         self._detector = None
         self._tracker = None
-        self._encoder = None
-        self._next_id = 1
-        self._embedder = None
-        self._embedder_model_name = None
         self._detector_install_attempted = False
         self._tracker_install_attempted = False
+        self._appearance_encoder = AppearanceEncoder(reid_model, "DeepSORT")
+        self._stable_memory = StableIdentityMemory()
         self._init_detector()
         self._init_tracker()
 
@@ -144,34 +145,22 @@ class DeepSORTTracker:
     # ── RE-ID Encoder ─────────────────────────────────────────────────────────
 
     def _init_tracker(self):
-        embedder, embedder_model_name = self._map_reid_config()
-        self._embedder = embedder
-        self._embedder_model_name = embedder_model_name
         try:
             # deep_sort_realtime package
             from deep_sort_realtime.deepsort_tracker import DeepSort
             self._tracker = DeepSort(
-                embedder=embedder,
-                embedder_model_name=embedder_model_name,
+                embedder=None,
                 half=False,
                 **DEEPSORT_KWARGS,
             )
             print(
-                f"[DeepSORT] Initialized with reid={self.reid_model}, "
-                f"embedder={embedder}, embedder_model_name={embedder_model_name}"
+                f"[DeepSORT] Initialized with external embeddings, reid={self.reid_model}"
             )
         except Exception as e:
             if not self._tracker_install_attempted:
                 if _is_missing_dependency_error(e, ["deep_sort_realtime", "deep-sort-realtime"]):
                     self._tracker_install_attempted = True
                     _install_packages(["deep-sort-realtime"])
-                    return self._init_tracker()
-                if _is_missing_dependency_error(e, ["torchreid"]):
-                    self._tracker_install_attempted = True
-                    _install_packages([
-                        "git+https://github.com/KaiyangZhou/deep-person-reid.git",
-                        "tensorboard",
-                    ])
                     return self._init_tracker()
             raise RuntimeError(f"DeepSORT tracker init failed: {e}") from e
 
@@ -181,22 +170,10 @@ class DeepSORTTracker:
             "tracker": "deepsort",
             "detector": self.detector_name,
             "reid_model": self.reid_model,
-            "embedder": self._embedder,
-            "embedder_model_name": self._embedder_model_name,
+            "embedder": "external",
+            "embedder_model_name": self.reid_model,
+            "manual_reid": self.manual_reid,
         }
-
-    def _map_reid_config(self) -> tuple[str, str]:
-        """Map selected Re-ID model to DeepSORT embedder and exact model name."""
-        mapping = {
-            "osnet_x0_25": ("torchreid", "osnet_x0_25"),
-            "osnet_x1_0": ("torchreid", "osnet_x1_0"),
-            "resnet50": ("torchreid", "resnet50"),
-            "mlfn": ("torchreid", "mlfn"),
-        }
-        if self.reid_model not in mapping:
-            supported = ", ".join(sorted(mapping.keys()))
-            raise ValueError(f"Unsupported DeepSORT reid_model '{self.reid_model}'. Supported: {supported}")
-        return mapping[self.reid_model]
 
     # ── Public API ───────────────────────────────────────────────────────────
 
@@ -208,21 +185,90 @@ class DeepSORTTracker:
         try:
             # deep_sort_realtime format: [[x1,y1,w,h], conf, class]
             ds_dets = []
+            det_boxes = []
             for d in dets:
                 x1, y1, x2, y2, conf = d[:5]
+                # Use exact detector boxes for appearance extraction and tracker updates.
                 ds_dets.append(([x1, y1, x2 - x1, y2 - y1], float(conf), "person"))
-            tracks = self._tracker.update_tracks(ds_dets, frame=frame)
+                det_boxes.append([x1, y1, x2, y2])
+            embeds = self._appearance_encoder.extract(frame, np.asarray(det_boxes, dtype=np.float32))
+            tracks = self._tracker.update_tracks(ds_dets, embeds=embeds)
             result = []
+            track_embeddings = []
             for t in tracks:
                 if not t.is_confirmed() or t.time_since_update > 0:
                     continue
-                ltrb = t.to_ltrb()
+                ltrb = t.to_ltrb(orig=True)
+                if ltrb is None:
+                    ltrb = t.to_ltrb()
                 # deep_sort_realtime does not always expose stable detection confidence per track.
-                # Use score=1.0 as a fallback for downstream AP computation.
-                result.append([float(ltrb[0]), float(ltrb[1]), float(ltrb[2]), float(ltrb[3]), str(t.track_id), 1.0])
-            return np.array(result, dtype=object) if result else np.empty((0, 6), dtype=object)
+                score = t.get_det_conf()
+                if score is None:
+                    score = 1.0
+                result.append([float(ltrb[0]), float(ltrb[1]), float(ltrb[2]), float(ltrb[3]), str(t.track_id), float(score)])
+                try:
+                    track_embeddings.append(np.asarray(t.get_feature(), dtype=np.float32))
+                except Exception:
+                    track_embeddings.append(None)
+            self._stable_memory.step()
+            if not result:
+                self._stable_memory.clear_active_mapping()
+                return np.empty((0, 6), dtype=object)
+
+            out = np.array(result, dtype=object)
+            if self.manual_reid:
+                out = self._stabilize_track_ids(frame, out, track_embeddings)
+            return out
         except Exception as e:
             raise RuntimeError(f"DeepSORT update error: {e}") from e
+
+    def _stabilize_track_ids(
+        self,
+        frame: np.ndarray,
+        tracks: np.ndarray,
+        track_embeddings: list[np.ndarray | None],
+    ) -> np.ndarray:
+        boxes = np.asarray(tracks[:, :4], dtype=float)
+        internal_ids = []
+        for track_id in tracks[:, 4]:
+            try:
+                internal_ids.append(int(float(track_id)))
+            except Exception:
+                internal_ids.append(abs(hash(str(track_id))) % 1000000)
+        embeddings = self._resolve_track_embeddings(frame, boxes, track_embeddings)
+        return self._stable_memory.reassign(
+            tracks=tracks,
+            boxes=boxes,
+            internal_ids=internal_ids,
+            embeddings=embeddings,
+            stringify_ids=True,
+        )
+
+    def _resolve_track_embeddings(
+        self,
+        frame: np.ndarray,
+        boxes: np.ndarray,
+        track_embeddings: list[np.ndarray | None],
+    ) -> np.ndarray | None:
+        if track_embeddings and any(embedding is not None for embedding in track_embeddings):
+            reference = next((embedding for embedding in track_embeddings if embedding is not None), None)
+            dim = int(reference.shape[0]) if reference is not None else 0
+            filled = []
+            missing_indices = []
+            for idx, embedding in enumerate(track_embeddings):
+                if embedding is None:
+                    filled.append(np.zeros((dim,), dtype=np.float32) if dim else None)
+                    missing_indices.append(idx)
+                else:
+                    filled.append(np.asarray(embedding, dtype=np.float32))
+            if missing_indices:
+                fallback = self._appearance_encoder.extract(frame, boxes[missing_indices])
+                if fallback is not None:
+                    for pos, emb in zip(missing_indices, fallback):
+                        filled[pos] = emb
+            if all(embedding is not None for embedding in filled):
+                return normalize_embeddings(np.asarray(filled, dtype=np.float32))
+        return self._appearance_encoder.extract(frame, boxes)
 
     # ── Mock helpers ─────────────────────────────────────────────────────────
 
@@ -300,3 +346,18 @@ def _iou_matrix(boxes_a: np.ndarray, boxes_b: np.ndarray) -> np.ndarray:
     area_b = (bx2 - bx1) * (by2 - by1)
     union = area_a[:, None] + area_b[None, :] - inter
     return np.where(union > 0, inter / union, 0.0)
+
+
+def _center_distance_ratio(box_a: np.ndarray, box_b: np.ndarray) -> float:
+    ax = float(box_a[0] + box_a[2]) / 2.0
+    ay = float(box_a[1] + box_a[3]) / 2.0
+    bx = float(box_b[0] + box_b[2]) / 2.0
+    by = float(box_b[1] + box_b[3]) / 2.0
+    dist = float(np.hypot(ax - bx, ay - by))
+
+    aw = max(float(box_a[2] - box_a[0]), 1.0)
+    ah = max(float(box_a[3] - box_a[1]), 1.0)
+    bw = max(float(box_b[2] - box_b[0]), 1.0)
+    bh = max(float(box_b[3] - box_b[1]), 1.0)
+    scale = max(np.hypot(aw, ah), np.hypot(bw, bh), 1.0)
+    return dist / scale

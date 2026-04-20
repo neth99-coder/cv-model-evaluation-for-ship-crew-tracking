@@ -27,8 +27,9 @@ deep-sort-realtime>=1.3.2
 #   pip install fairmot
 
 # RE-ID (used by boxmot/deepsort)
-# torchreid is bundled with boxmot; for standalone:
-#   pip install torchreid
+torchreid>=0.2.5
+gdown>=5.2.0
+tensorboard>=2.16.0
 
 # ── Optional ─────────────────────────────────────────────────────────────────
 # sort-python>=1.1.0         # Fallback pure SORT tracker
