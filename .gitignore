@@ -20,3 +20,4 @@ __pycache__/
 *.pt
 */*/outputs/
 */*/uploads/
+*/*results/
