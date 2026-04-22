@@ -102,13 +102,13 @@ npm run dev       # http://localhost:5173
 
 | Framework | Tracker    | Detectors              | Re-ID Support | Re-ID Models                            |
 | --------- | ---------- | ---------------------- | ------------- | --------------------------------------- |
-| BOXMOT    | bytetrack  | yolov8n/s/m, yolov5n/s | ✗             | —                                       |
-| BOXMOT    | botsort    | yolov8n/s/m, yolov5n/s | ✓             | osnet_x0_25, osnet_x1_0, resnet50, mlfn |
-| BOXMOT    | ocsort     | yolov8n/s/m, yolov5n/s | ✗             | —                                       |
-| BOXMOT    | deepocsort | yolov8n/s/m, yolov5n/s | ✓             | osnet_x0_25, osnet_x1_0, resnet50, mlfn |
-| BOXMOT    | strongsort | yolov8n/s/m, yolov5n/s | ✓             | osnet_x0_25, osnet_x1_0, resnet50, mlfn |
+| BOXMOT    | bytetrack  | yolov8/11/26 n/s/m/l/x, yolov5 n/s/m/l/x | ✗             | —                                       |
+| BOXMOT    | botsort    | yolov8/11/26 n/s/m/l/x, yolov5 n/s/m/l/x | ✓             | osnet_x0_25, osnet_x1_0, resnet50, mlfn |
+| BOXMOT    | ocsort     | yolov8/11/26 n/s/m/l/x, yolov5 n/s/m/l/x | ✗             | —                                       |
+| BOXMOT    | deepocsort | yolov8/11/26 n/s/m/l/x, yolov5 n/s/m/l/x | ✓             | osnet_x0_25, osnet_x1_0, resnet50, mlfn |
+| BOXMOT    | strongsort | yolov8/11/26 n/s/m/l/x, yolov5 n/s/m/l/x | ✓             | osnet_x0_25, osnet_x1_0, resnet50, mlfn |
 | FairMOT   | fairmot    | dla34, hrnet, resnet50 | ✓ (built-in)  | Joint detection-embedding               |
-| DeepSORT  | deepsort   | yolov8n/s/m, yolov5n/s | ✓             | osnet_x0_25, osnet_x1_0, resnet50       |
+| DeepSORT  | deepsort   | yolov8/11/26 n/s/m/l/x, yolov5 n/s/m/l/x | ✓             | osnet_x0_25, osnet_x1_0, resnet50       |
 
 ---
 

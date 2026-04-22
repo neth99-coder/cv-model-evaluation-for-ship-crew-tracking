@@ -44,9 +44,24 @@ YOLO_WEIGHTS = {
     "yolov8n": "yolov8n.pt",
     "yolov8s": "yolov8s.pt",
     "yolov8m": "yolov8m.pt",
+    "yolov8l": "yolov8l.pt",
+    "yolov8x": "yolov8x.pt",
+    "yolo11n": "yolo11n.pt",
+    "yolo11s": "yolo11s.pt",
+    "yolo11m": "yolo11m.pt",
+    "yolo11l": "yolo11l.pt",
+    "yolo11x": "yolo11x.pt",
+    "yolo26n": "yolo26n.pt",
+    "yolo26s": "yolo26s.pt",
+    "yolo26m": "yolo26m.pt",
+    "yolo26l": "yolo26l.pt",
+    "yolo26x": "yolo26x.pt",
     # Map legacy YOLOv5 names to Ultralytics v8-compatible YOLOv5u checkpoints.
     "yolov5n": "yolov5nu.pt",
     "yolov5s": "yolov5su.pt",
+    "yolov5m": "yolov5mu.pt",
+    "yolov5l": "yolov5lu.pt",
+    "yolov5x": "yolov5xu.pt",
 }
 
 

@@ -59,7 +59,13 @@ COLOR_UPDATE_INTERVAL = {
 TRACKER_CAPABILITIES = {
     "boxmot": {
         "trackers": ["bytetrack", "botsort", "ocsort", "deepocsort", "strongsort"],
-        "detectors": ["yolov8n", "yolov8s", "yolov8m", "yolov5n", "yolov5s", "fasterrcnn", "ssd_mobilenet"],
+        "detectors": [
+            "yolov8n", "yolov8s", "yolov8m", "yolov8l", "yolov8x",
+            "yolo11n", "yolo11s", "yolo11m", "yolo11l", "yolo11x",
+            "yolo26n", "yolo26s", "yolo26m", "yolo26l", "yolo26x",
+            "yolov5n", "yolov5s", "yolov5m", "yolov5l", "yolov5x",
+            "fasterrcnn", "ssd_mobilenet",
+        ],
         "reid": {
             "bytetrack": False,
             "botsort": True,
@@ -77,7 +83,13 @@ TRACKER_CAPABILITIES = {
     },
     "deepsort": {
         "trackers": ["deepsort"],
-        "detectors": ["yolov8n", "yolov8s", "yolov8m", "yolov5n", "yolov5s", "fasterrcnn", "ssd_mobilenet"],
+        "detectors": [
+            "yolov8n", "yolov8s", "yolov8m", "yolov8l", "yolov8x",
+            "yolo11n", "yolo11s", "yolo11m", "yolo11l", "yolo11x",
+            "yolo26n", "yolo26s", "yolo26m", "yolo26l", "yolo26x",
+            "yolov5n", "yolov5s", "yolov5m", "yolov5l", "yolov5x",
+            "fasterrcnn", "ssd_mobilenet",
+        ],
         "reid": {"deepsort": True},
         "reid_models": ["osnet_x0_25", "osnet_x1_0", "resnet50"],
     },
